@@ -1,4 +1,4 @@
-# ShieldAI: End-to-End Phishing Detection System
+# AI-Powered Phishing Security Project: End-to-End Detection System
 
 ## 1. Project Overview
 This project implements an end-to-end **hybrid phishing detection** system. Given the body of an email, it outputs:
