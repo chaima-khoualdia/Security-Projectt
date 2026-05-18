@@ -1,94 +1,165 @@
-#  AI-Powered Phishing Security Project: End-to-End Detection System
+# ShieldAI: End-to-End Phishing Detection System
 
-## 1. Project Overview & Core Concepts
-Phishing remains one of the most prevalent cyber threats, leveraging social engineering to deceive users into disclosing sensitive information. This project implements a **Hybrid Machine Learning Detection System** that analyzes both the semantic content of an email and its structural metadata.
+## 1. Project Overview
+This project implements an end-to-end **hybrid phishing detection** system. Given the body of an email, it outputs:
+- `prediction`: `1` (Phishing) or `0` (Safe)
+- `confidence`: probability score scaled to a percentage
 
-### Main Components
-*   **NLP Processor:** Utilizes TF-IDF (Term Frequency-Inverse Document Frequency) to convert raw text into weighted numerical vectors, capturing the linguistic "signature" of phishing attempts.
-*   **Heuristic Feature Extractor:** A custom logic layer that identifies key security indicators:
-    *   **URL Count:** Tracking the presence of hyperlinks.
-    *   **Exclamation Density:** Measuring high-pressure punctuation usage.
-    *   **Urgency Keywords:** Identifying triggers like "immediately," "suspended," or "verify."
-*   **Classification Head:** A **Random Forest Classifier** that fuses NLP vectors with heuristic data to provide a final risk assessment.
+The system combines:
+- **Text semantics** via a TF-IDF vectorizer
+- **Hand-crafted heuristic features** from the email body
+- A trained **Random Forest** classifier that consumes both feature types
 
-### Functional Flow
-1.  **Ingestion:** The system receives a raw email string via a REST API endpoint.
-2.  **Preprocessing:** Text is normalized (lowercasing, punctuation removal).
-3.  **Feature Fusion:** Sparse text matrices are horizontally stacked with dense heuristic arrays.
-4.  **Inference:** The model calculates the probability of a threat.
-5.  **Decision Logic:** A tuned threshold of **0.15** is applied to prioritize **Recall**, ensuring even subtle "low-confidence" threats are flagged.
+The project exposes:
+- A **Flask REST API** (`POST /predict`)
+- A **Gradio UI** for interactive testing
 
 ---
 
-## 2. Market Analysis: Existing Solutions
-Existing phishing defense mechanisms typically rely on two pillars:
-*   **Blacklisting:** Comparing URLs against databases of known malicious sites. 
-    *   *Limitation:* Ineffective against "Zero-Day" attacks or fresh domains.
-*   **Static Keyword Filtering:** Looking for specific "spam" words.
-    *   *Limitation:* Easily bypassed by changing the wording or using images.
-*   **Proposed Solution:** This project addresses these gaps by using **Behavioral Modeling**. By training on 450,000+ real-world emails (Enron and Kaggle datasets), the model learns the *pattern* of a scam rather than just a list of bad words.
+## 2. Inference Pipeline (How the Detection Works)
+When an email body is submitted, the app performs the following steps:
 
----
+### 2.1 Text cleaning / normalization
+The input text is:
+- converted to lowercase
+- stripped of punctuation
 
-## 3. High-Level Design (HLD)
-The system architecture is designed for low-latency inference and easy integration into existing mail servers or Progressive Web Apps (PWAs).
+### 2.2 Heuristic feature extraction
+From the *raw* email body, the app computes:
+- `urls = email_body.count('http')`
+- `exclamations = email_body.count('!')`
 
+Then it computes an `urgency` score based on substring membership in the **cleaned** text:
+```python
+urgency_list = ['urgent', 'immediately', 'suspended', 'verify', 'security']
+urgency = sum(1 for word in urgency_list if word in cleaned_text)
 
-
-### System Components & Data Exchange
-| Component | Function | Exchanged Data |
-| :--- | :--- | :--- |
-| **Client** | User Interface (e.g., PWA) | Sends raw email body via POST request. |
-| **Flask API** | Backend Controller | Routes data and handles JSON serialization. |
-| **ML Engine** | Vectorizer & Model | Returns `Prediction` (0/1) and `Confidence` (%). |
-
----
-
-## 4. Tools & Development Phases
-### Tech Stack
-*   **Language:** Python 3.x
-*   **Core Libraries:** Scikit-learn, Pandas, Numpy, Joblib, Scipy.
-*   **Backend:** Flask (WSGI Server).
-*   **Environment:** Git Bash, Jupyter Notebook.
-
-### Development Phases
-1.  **EDA & Preprocessing:** Analysis of imbalanced datasets and text normalization.
-2.  **Feature Engineering:** Development of the hybrid feature fusion logic (`predict_phishing_v3`).
-3.  **Training & Optimization:** Tuning the Random Forest parameters and adjusting the classification threshold for high sensitivity.
-4.  **Deployment:** Serialization of the model into `.pkl` format and deployment as a RESTful service.
-
----
-
-## 5. Executable Deliverable
-The primary deliverable is an **Active Phishing Detection API**.
-
-### How to Run:
-1.  **Clone the Repository:**
-    ```bash
-    git clone <your-repository-url>
-    ```
-2.  **Install Dependencies:**
-    ```bash
-    pip install flask joblib scikit-learn scipy
-    ```
-3.  **Initialize the Server:**
-    
-```bash
-    python app.py
-    ```
-4.  **Live Test (via Git Bash):**
-    ```bash
-    curl -X POST http://127.0.0.1:5000/predict \
-         -H "Content-Type: application/json" \
-         -d '{"email": "Urgent! Your account is compromised. Click http://secure-verify.com now!"}'
-    ```
-
-### Expected Output:
-```json
-{
-  "status": "Phishing",
-  "prediction": 1,
-  "confidence": 20.0
-}
 ```
 
+So the heuristic vector is: `[urls, exclamations, urgency]`
+
+### 2.3 TF-IDF vectorization + feature fusion
+
+```python
+text_vector = tfidf.transform([cleaned])
+heuristics = np.array([[urls, exclamations, urgency]])
+final_input = hstack([text_vector, heuristics])
+
+```
+
+### 2.4 Classification + decision threshold
+
+```python
+probability = model.predict_proba(final_input)[0][1]
+prediction = 1 if probability > 0.15 else 0
+
+```
+
+The threshold is 0.15 to prefer higher recall (more phishing flagged).
+
+---
+
+## 3. REST API: POST /predict
+
+### Request
+
+* **Method:** POST
+* **Content-Type:** application/json
+* **Body** must include an email field:
+
+```json
+{
+  "email": "Paste the full email body text here..."
+}
+
+```
+
+If email is missing, the code uses an empty string.
+
+### Response
+
+The API returns:
+
+```json
+{
+  "prediction": 1,
+  "confidence": 20.0,
+  "status": "Phishing"
+}
+
+```
+
+* `status` is "Phishing" when prediction == 1, otherwise "Safe"
+* `confidence` = probability * 100, rounded to 2 decimals
+
+### Example (cURL)
+
+```bash
+curl -X POST [http://127.0.0.1:5000/predict](http://127.0.0.1:5000/predict) \
+  -H "Content-Type: application/json" \
+  -d '{"email": "Urgent! Your account is compromised. Click [http://secure-verify.com](http://secure-verify.com) now!"}'
+
+```
+
+---
+
+## 4. Gradio UI
+
+Running `app.py` also starts a Gradio interface. You paste an email body into a textbox and receive a single output text string in the format:
+
+```text
+Analysis: PHISHING DETECTED
+Confidence Score: XX.XX%
+
+```
+
+(When safe, it shows `Analysis: SAFE EMAIL`.)
+
+The Gradio app is launched with:
+
+```python
+demo.launch(share=True)
+
+```
+
+---
+
+## 5. Required Runtime Files
+
+`app.py` loads these artifacts from the project root:
+
+* `final_hybrid_phishing_model.pkl`
+* `final_tfidf_vectorizer.pkl`
+
+---
+
+## 6. Dependencies
+
+Install required packages (for `app.py`):
+
+```bash
+pip install flask joblib numpy scipy scikit-learn gradio
+
+```
+
+---
+
+## 7. How to Run
+
+Start the server:
+
+```bash
+python app.py
+
+```
+
+* Flask runs on port 5000
+* Gradio UI runs at launch (and uses `share=True`)
+
+---
+
+## 8. Security / Reliability Note
+
+This system is a probabilistic classifier. Output should be treated as an aid for defensive review, not as absolute truth. Always use additional security controls and human verification for high-impact actions.
+
+```
